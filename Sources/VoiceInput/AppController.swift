@@ -19,6 +19,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     var ticker: Timer?
     var startedAt = Date()
     var recognition: Task<Void, Never>?
+    var captureTask: Task<Void, Never>?
     var preparation: Task<Void, Never>?
     var dismissal: Task<Void, Never>?
     var permissionTimer: Timer?
@@ -105,6 +106,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
     func toggle() {
+        if captureTask != nil { cancel(); return }
         switch session.phase {
         case .recording: stopAndRecognize()
         case .transcribing, .cancelling: break
@@ -113,22 +115,35 @@ final class AppController: NSObject, NSApplicationDelegate {
             refreshPermissions()
             guard state.modelReady, state.microphoneGranted, state.hotkeyError == nil else { showSetup(); return }
             dismissal?.cancel()
-            target = insertion.capture()
-            guard session.start() != nil else { return }
-            do { try recorder.start() }
-            catch { session.fail(); notify("Запись не началась", detail: error.localizedDescription); return }
-            startedAt = Date(); state.seconds = 0; state.level = 0
-            state.title = "Слушаю…"; state.detail = "⌘ + ` — закончить"; state.recording = true; state.busy = false; state.cancellable = true
-            panel.show(on: target?.screen ?? NSScreen.main!)
-            statusItem.button?.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Идёт запись")
-            ticker = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-                Task { @MainActor in
-                    guard let self, self.session.phase == .recording else { return }
-                    self.state.seconds = Int(Date().timeIntervalSince(self.startedAt))
-                    let db = 20 * log10(max(self.recorder.level, 0.00001))
-                    self.state.level = CGFloat(max(0, min(1, (db + 55) / 40)))
-                    if self.state.seconds >= 30 * 60 { self.stopAndRecognize() }
-                }
+            let destinationApp = NSWorkspace.shared.frontmostApplication
+            state.title = "Подготовка ввода…"; state.detail = "⌘ + ` — отменить"
+            state.recording = false; state.busy = true; state.cancellable = true
+            panel.show(on: NSScreen.main!)
+            captureTask = Task { [weak self] in
+                guard let self else { return }
+                defer { captureTask = nil }
+                let destination = await insertion.capture(application: destinationApp)
+                guard !Task.isCancelled else { return }
+                startRecording(into: destination)
+            }
+        }
+    }
+    private func startRecording(into destination: TextInsertion.Target?) {
+        target = destination
+        guard session.start() != nil else { return }
+        do { try recorder.start() }
+        catch { session.fail(); notify("Запись не началась", detail: error.localizedDescription); return }
+        startedAt = Date(); state.seconds = 0; state.level = 0
+        state.title = "Слушаю…"; state.detail = "⌘ + ` — закончить"; state.recording = true; state.busy = false; state.cancellable = true
+        panel.show(on: target?.screen ?? NSScreen.main!)
+        statusItem.button?.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Идёт запись")
+        ticker = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.session.phase == .recording else { return }
+                self.state.seconds = Int(Date().timeIntervalSince(self.startedAt))
+                let db = 20 * log10(max(self.recorder.level, 0.00001))
+                self.state.level = CGFloat(max(0, min(1, (db + 55) / 40)))
+                if self.state.seconds >= 30 * 60 { self.stopAndRecognize() }
             }
         }
     }
@@ -171,6 +186,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
     func cancel() {
         dismissal?.cancel()
+        if let captureTask {
+            captureTask.cancel()
+            finishCancellation()
+            return
+        }
         if session.phase == .recording {
             _ = recorder.stop(); ticker?.invalidate(); ticker = nil
             session.cancel(); finishCancellation()
@@ -196,7 +216,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
     @objc func quit() { NSApp.terminate(nil) }
     func applicationWillTerminate(_ notification: Notification) {
-        hotkey.unregister(); _ = recorder.stop(); recognition?.cancel(); preparation?.cancel()
+        hotkey.unregister(); _ = recorder.stop(); captureTask?.cancel(); recognition?.cancel(); preparation?.cancel()
         ticker?.invalidate(); permissionTimer?.invalidate(); dismissal?.cancel()
     }
 }
