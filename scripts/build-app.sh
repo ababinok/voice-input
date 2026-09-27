@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+if [ "$(uname -m)" != arm64 ]; then
+    echo 'This release build requires an Apple Silicon Mac.' >&2
+    exit 1
+fi
 app_dir="$PWD/dist/Voice Input.app"
 # Replacing a running executable breaks the process's code-signing identity.
 if pgrep -f -x "$app_dir/Contents/MacOS/VoiceInput" >/dev/null; then
@@ -25,10 +29,14 @@ cp THIRD_PARTY_NOTICES.md "$staged_app/Contents/Resources/THIRD_PARTY_NOTICES.md
 ./scripts/sign-app.sh "$staged_app"
 # Prepare everything before replacing the previous, working package.
 ditto -c -k --sequesterRsrc --keepParent "$staged_app" "$staging_root/Voice-Input-macOS-arm64.zip"
+version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' scripts/Info.plist)"
+dmg_name="Voice-Input-$version-arm64.dmg"
+./scripts/build-dmg.sh "$staged_app" "$staging_root/$dmg_name"
 if [ -d "$app_dir" ]; then mv "$app_dir" "$staging_root/previous.app"; fi
 if ! mv "$staged_app" "$app_dir"; then
     [ ! -d "$staging_root/previous.app" ] || mv "$staging_root/previous.app" "$app_dir"
     exit 1
 fi
 mv -f "$staging_root/Voice-Input-macOS-arm64.zip" "$PWD/dist/Voice-Input-macOS-arm64.zip"
+mv -f "$staging_root/$dmg_name" "$PWD/dist/$dmg_name"
 printf 'Built: %s\n' "$app_dir"

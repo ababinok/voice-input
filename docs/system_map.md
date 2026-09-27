@@ -43,7 +43,9 @@ model-path.txt расположены в Application Support/VoiceInput. Мар�
 Core ML ведёт собственный системный кэш специализации.
 
 scripts/build-app.sh создаёт dist/Voice Input.app, копирует ресурсные bundle SwiftPM,
-добавляет Info.plist/лицензии, постоянную локальную подпись и ZIP. Постоянный bundle ID:
+добавляет иконку, Info.plist/лицензии, постоянную локальную подпись, ZIP и версионный DMG.
+scripts/build-dmg.sh упаковывает подписанную .app, ссылку на /Applications и краткую
+инструкцию docs/INSTALL.txt в проверенный read-only образ. DMG можно собрать отдельно. Постоянный bundle ID:
 local.voiceinput.app. scripts/sign-app.sh хранит сертификат и закрытый ключ вне репозитория,
 в Application Support/VoiceInputSigning. Идентичность привязана к сертификату и bundle ID,
 а не к хешу бинарника; материалы подписи нельзя пересоздавать между обновлениями.
