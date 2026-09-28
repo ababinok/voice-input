@@ -14,7 +14,7 @@ cd voice-input
 ./scripts/build-app.sh
 ```
 
-В `dist/` появятся `.app`, ZIP и `Voice-Input-1.0.0-arm64.dmg`.
+В `dist/` появятся `.app`, ZIP и версионный DMG, например `Voice-Input-1.0.1-arm64.dmg`.
 Закройте копию из `dist/` перед пересборкой. Готовую `.app` перенесите в «Программы».
 Для пересоздания только DMG: `./scripts/build-dmg.sh`.
 

@@ -41,10 +41,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
         hotkey.onPress = { [weak self] in self?.toggle() }
         do { try hotkey.register() } catch { state.hotkeyError = error.localizedDescription }
-        recorder.onDeviceChange = { [weak self] in
+        recorder.onDeviceFailure = { [weak self] in
             guard let self, self.session.phase == .recording else { return }
             _ = self.recorder.stop(); self.ticker?.invalidate(); self.session.fail()
-            self.notify("Микрофон отключён", detail: "Проверьте устройство и начните запись заново.")
+            self.notify("Микрофон недоступен", detail: "Проверьте устройство ввода и начните запись заново.")
         }
         refreshPermissions()
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in

@@ -35,10 +35,17 @@ final class Recorder {
     private var engine: AVAudioEngine?
     private var collector: SampleCollector?
     private var observer: NSObjectProtocol?
-    var onDeviceChange: (() -> Void)?
+    private var restartTask: Task<Void, Never>?
+    var onDeviceFailure: (() -> Void)?
     var level: Float { collector?.meter() ?? 0 }
 
     func start() throws {
+        let collector = SampleCollector()
+        try startEngine(collector: collector)
+        self.collector = collector
+    }
+
+    private func startEngine(collector: SampleCollector) throws {
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
@@ -47,8 +54,6 @@ final class Recorder {
               let converter = AVAudioConverter(from: inputFormat, to: target) else {
             throw AppError.message("Микрофон недоступен. Проверьте устройство ввода в настройках звука.")
         }
-        let collector = SampleCollector()
-        self.collector = collector
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { buffer, _ in
             let capacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * 16000 / inputFormat.sampleRate) + 32)
             guard let converted = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
@@ -61,18 +66,48 @@ final class Recorder {
             if error == nil { collector.append(converted) }
         }
         do { try engine.start() }
-        catch { input.removeTap(onBus: 0); self.collector = nil; throw error }
+        catch { input.removeTap(onBus: 0); throw error }
         self.engine = engine
         observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.onDeviceChange?() }
+            Task { @MainActor in
+                guard let self, self.engine === engine else { return }
+                self.restartAfterConfigurationChange()
+            }
         }
     }
-    func stop() -> (samples: [Float], peak: Float) {
+
+    private func disposeEngine() {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
         engine?.stop()
         engine?.inputNode.removeTap(onBus: 0)
         engine = nil
+    }
+
+    private func restartAfterConfigurationChange() {
+        guard restartTask == nil, let collector else { return }
+        disposeEngine()
+        restartTask = Task { [weak self] in
+            guard let self else { return }
+            // Bluetooth input can briefly disappear while macOS switches its audio profile.
+            for delay in [0.2, 0.5, 1.0, 2.0] {
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                do {
+                    try startEngine(collector: collector)
+                    restartTask = nil
+                    return
+                } catch { continue }
+            }
+            restartTask = nil
+            onDeviceFailure?()
+        }
+    }
+
+    func stop() -> (samples: [Float], peak: Float) {
+        restartTask?.cancel()
+        restartTask = nil
+        disposeEngine()
         let result = collector?.take() ?? ([], 0)
         collector = nil
         return result
